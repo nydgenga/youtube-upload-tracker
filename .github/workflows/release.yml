@@ -1,0 +1,97 @@
+name: Publish approved release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/release-request.json'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: youtube-upload-tracker-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate release request and package metadata
+        id: release
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          request = json.loads(Path('.github/release-request.json').read_text())
+          metadata = json.loads(Path('package/metadata.json').read_text())
+          version = request.get('version', '')
+          if request.get('approved') is not True:
+              raise SystemExit('Release is not explicitly approved.')
+          if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version):
+              raise SystemExit('Only explicitly approved stable version numbers may be published.')
+          if metadata['KPlugin']['Version'] != version:
+              raise SystemExit('Release version and package metadata do not match.')
+          if metadata['KPlugin']['Id'] != 'com.nydgenga.youtubeuploads':
+              raise SystemExit('Unexpected Plasma package ID.')
+          notes = request.get('notes', '').strip()
+          if not notes:
+              raise SystemExit('Release notes are required.')
+          Path('release-notes.txt').write_text(notes + '\n')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              print('version=' + version, file=output)
+          print('Validated approved release:', version)
+          PY
+
+      - name: Run regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          for test_file in tests/*.py; do python "$test_file"; done
+          for test_file in tests/*.mjs; do node "$test_file"; done
+
+      - name: Build installable plasmoid
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+          base = Path('package')
+          version = json.loads((base / 'metadata.json').read_text())['KPlugin']['Version']
+          target = Path('dist') / f'youtube-upload-tracker-{version}.plasmoid'
+          target.parent.mkdir(exist_ok=True)
+          with ZipFile(target, 'w', ZIP_DEFLATED, compresslevel=9) as z:
+              for file in sorted(base.rglob('*')):
+                  if file.is_file():
+                      z.write(file, file.relative_to(base))
+          print(target, target.stat().st_size, 'bytes')
+          PY
+
+      - name: Publish GitHub release and attach plasmoid
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ steps.release.outputs.version }}"
+          if gh release view "v$version" >/dev/null 2>&1; then
+            echo "::error::Release v$version already exists; refusing to overwrite."
+            exit 1
+          fi
+          gh release create "v$version" dist/*.plasmoid \
+            --target "$GITHUB_SHA" \
+            --title "YouTube Upload Tracker v$version" \
+            --notes-file release-notes.txt
