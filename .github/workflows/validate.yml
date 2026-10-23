@@ -1,0 +1,92 @@
+name: Validate Plasma widget
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Verify GitHub Actions connection
+        run: |
+          test -f README.md
+          echo "Repository checkout and GitHub Actions are operational."
+
+      - name: Detect widget source
+        id: detect
+        shell: bash
+        run: |
+          if [[ -f package/metadata.json && -d tests ]]; then
+            echo "source_present=true" >> "$GITHUB_OUTPUT"
+            echo "Widget source present; running tests and producing a development artifact."
+          else
+            echo "source_present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::GitHub Actions is working. Widget source has not been imported yet; no package was built."
+          fi
+
+      - name: Set up Node.js
+        if: steps.detect.outputs.source_present == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Set up Python
+        if: steps.detect.outputs.source_present == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run Python regression tests
+        if: steps.detect.outputs.source_present == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for test_file in tests/*.py; do
+            python "$test_file"
+          done
+
+      - name: Run JavaScript regression tests
+        if: steps.detect.outputs.source_present == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for test_file in tests/*.mjs; do
+            node "$test_file"
+          done
+
+      - name: Package development plasmoid
+        if: steps.detect.outputs.source_present == 'true'
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+          base = Path('package')
+          metadata = json.loads((base / 'metadata.json').read_text())
+          version = metadata['KPlugin']['Version']
+          output = Path('dist') / f'youtube-upload-tracker-{version}.plasmoid'
+          output.parent.mkdir(exist_ok=True)
+          with ZipFile(output, 'w', ZIP_DEFLATED, compresslevel=9) as archive:
+              for path in sorted(base.rglob('*')):
+                  if path.is_file():
+                      archive.write(path, path.relative_to(base))
+          print(f'Packaged {output} ({output.stat().st_size} bytes)')
+          PY
+
+      - name: Upload development package (not a release)
+        if: steps.detect.outputs.source_present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-upload-tracker-development
+          path: dist/*.plasmoid
+          if-no-files-found: error
