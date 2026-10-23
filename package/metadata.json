@@ -1,0 +1,19 @@
+{
+  "KPackageStructure": "Plasma/Applet",
+  "KPlugin": {
+    "Id": "com.nydgenga.youtubeuploads",
+    "Name": "YouTube Upload Tracker",
+    "Description": "Follow selected channels through their public upload feeds",
+    "Icon": "applications-multimedia",
+    "Category": "Online Services",
+    "Version": "0.1.0-dev15",
+    "License": "0BSD",
+    "Authors": [
+      {
+        "Name": "Contributors"
+      }
+    ],
+    "Website": "https://www.youtube.com/"
+  },
+  "X-Plasma-API-Minimum-Version": "6.0"
+}
