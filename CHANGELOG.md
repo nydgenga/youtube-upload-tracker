@@ -1,3 +1,13 @@
+## v0.1.0-dev16 — 2026-10-22 (unreleased development build)
+
+### Fixes
+- Gate service-outage recovery probes with both a QML one-shot timer and the absolute next-probe deadline, preventing the early probe observed in dev15.
+- Record an engine-instance identifier in the journal to distinguish separate applet instances and Plasma restarts.
+
+### Maintenance
+- Keep a stable `YTUPLOAD` journal prefix and permanent, low-volume error/recovery diagnostics. Routine network and parser traces remain development-only and can be disabled for a stable release.
+- Expand scheduler tests to enforce both probe-delay guards and ensure rearming after failures. No database migration or feature changes.
+
 ## v0.1.0-dev15 — 2026-10-22 (unreleased development build)
 
 **Bug fixes and reliability:**

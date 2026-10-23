@@ -1,20 +1,24 @@
 # YouTube Upload Tracker (Plasma 6)
 
-**Status:** v0.1.0-dev15 — *experimental test build*, not a released product.
+**Status:** v0.1.0-dev16 — *experimental test build*, not a released product.
 
-**dev15 is a reliability-focused test build.** It adds service-outage detection,
-conservative single-feed recovery probes, and manual-refresh cooldown handling.
-It changes neither the Atom parser nor the SQLite data model from the working
-dev14 build. Historical read/unread choices and followed channels remain intact.
+**dev16 is a targeted reliability correction.** In addition to the existing
+outage detector, recovery probes now require **both** the scheduled absolute
+UTC deadline and an independently fired one-shot QML Timer. A second guard
+prevents the early probe observed in the dev15 journal. The cause of that
+premature probe is not yet conclusively established; per-instance journal IDs
+make future traces unambiguous.
 
-**Development diagnostics:** This build intentionally emits warning-level
-`YTUPLOAD_DEV15` messages so they can be grepped from the Plasma journal.
-These are test diagnostics, not necessarily real warnings; public builds must
-reduce them. Messages contain channel IDs, parser counts, and short errors,
-not whole XML responses, video titles, or credentials. Example:
+**Permanent diagnostics:** A stable `YTUPLOAD` journal prefix records network
+failures, channel-ID mismatches, suspected outages, probe schedules/failures,
+and successful recovery. This stays enabled in public releases. Verbose logs
+(including routine `FETCH_START`, `PARSE_RESULT`, and `FETCH_OK`) are enabled
+in development builds only; toggle `verboseLogging: false` before publishing.
+Logs do not include feed bodies, video titles, or credentials. Qt logging is
+sent to the Plasma journal; no separate disk log file is created.
 
 ```bash
-journalctl --user -b --since '10 minutes ago' --no-pager | grep 'YTUPLOAD_DEV15'
+journalctl --user -b --since '15 minutes ago' -o short-iso-precise --no-pager | grep 'YTUPLOAD'
 ```
 
 **Known source limitation:** YouTube's public Atom feed may omit ongoing or
@@ -23,7 +27,7 @@ parser fix cannot retrieve content YouTube never includes in the feed.
 
 **Bazzite verification:** Through dev14, the user verified real feed imports,
 read/unread controls, successful manual refreshes, and journal logging. The
-new circuit-breaker behavior in dev15 still needs desktop and actual-outage
+new circuit-breaker behavior in dev16 still needs desktop and actual-outage
 recovery testing.
 
 A self-contained KDE Plasma 6 panel/desktop widget tracking selected public
@@ -62,13 +66,13 @@ uses Qt's image cache; a strict 50-MB disk cache is not yet implemented.
 From the folder containing the `.plasmoid` file:
 
 ```sh
-kpackagetool6 --type Plasma/Applet --install youtube-upload-tracker-0.1.0-dev15.plasmoid
+kpackagetool6 --type Plasma/Applet --install youtube-upload-tracker-0.1.0-dev16.plasmoid
 ```
 
 If you've installed an earlier test build, use:
 
 ```sh
-kpackagetool6 --type Plasma/Applet --upgrade youtube-upload-tracker-0.1.0-dev15.plasmoid
+kpackagetool6 --type Plasma/Applet --upgrade youtube-upload-tracker-0.1.0-dev16.plasmoid
 ```
 
 Open the **Add Widgets** interface and search for **YouTube Upload Tracker**,
@@ -123,13 +127,13 @@ are confirmed working in the current Bazzite tests; Nobara is still untested.
 All local Node parser tests, SQLite schema/migration tests and package checks
 pass, including a 15-entry feed recovery scenario and strict ownership checks.
 The dev12–dev14 parser and interface were verified against live feeds on
-Bazzite; dev15's circuit-breaker logic is only locally tested so far. Nobara
+Bazzite; dev16's extra timing guard is only locally tested so far. Nobara
 is not yet tested for this widget. The ongoing livestream coverage question
 remains separate from the parser regression.
 
 The code is distributed under the 0BSD license (see LICENSE).
 
-### dev15 outage safeguard (development)
+### dev16 outage safeguard (development)
 
 The scheduler temporarily pauses feed polling if four or more distinct feeds
 return HTTP 404, 429, or 5xx within three minutes and at least 75% of recent
@@ -140,7 +144,7 @@ Manual Refresh respects cooldowns and cannot force requests during a suspected
 outage; skipped channels are reported as deferred. For diagnostic logs:
 
 ```bash
-journalctl --user -b --since '10 minutes ago' --no-pager | grep YTUPLOAD_DEV15
+journalctl --user -b --since '10 minutes ago' --no-pager | grep YTUPLOAD
 ```
 
 This is a heuristic for service problems, not a guarantee that the issue is

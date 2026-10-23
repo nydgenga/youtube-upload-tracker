@@ -24,7 +24,8 @@ const context={
         pruneSeen:()=>{}
     },
     recentFeedResults:[],upstreamOutageActive:false,upstreamProbeAfterMs:0,
-    upstreamProbeId:'',upstreamProbeFailures:0,
+    upstreamProbeId:'',upstreamProbeFailures:0,upstreamProbeTimerReady:false,
+    outageProbeTimer:{interval:0,started:false,stop(){this.started=false;},start(){this.started=true;}},
     manualRefreshActive:false,manualRefreshRemaining:0,manualRefreshDeferred:0,
     manualRefreshErrors:0,pendingManualRefresh:{},
     manualRefreshFinished:(e,d)=>completed.push([e,d]),
@@ -51,6 +52,8 @@ assert.equal(context.upstreamOutageActive,false,'3/4 bad is insufficient because
 context.failure('e','HTTP 404',404);
 assert.equal(context.upstreamOutageActive,true);
 assert.ok(context.upstreamProbeAfterMs>Date.now());
+assert.equal(context.upstreamProbeTimerReady,false);
+assert.equal(context.outageProbeTimer.started,true);
 assert.equal(rows.find(r=>r.id==='e').failures,1);
 assert.ok(logs.some(v=>v[0]==='OUTAGE_ENTER'));
 
@@ -58,8 +61,12 @@ context.tick();
 assert.equal(started.length,0,'Routine polling must halt during outage');
 context.upstreamProbeAfterMs=Date.now()-100;
 context.tick();
+assert.equal(started.length,0,'Past wall clock deadline alone cannot launch probe');
+context.upstreamProbeTimerReady=true; // simulate QML Timer.onTriggered
+context.tick();
 assert.equal(started.length,1);
 assert.equal(started[0].probe,true);
+assert.equal(context.upstreamProbeTimerReady,false,'Probe consumes one-shot timer ready signal');
 assert.equal(context.upstreamProbeId,started[0].id);
 context.lastStartMs=0;
 context.tick();
@@ -72,6 +79,9 @@ assert.ok(context.upstreamProbeAfterMs-Date.now()>19*60000,'Second probe backs o
 // Clear simulated in-flight probe and mark a due channel.
 context.active={};context.inFlightCount=0;
 context.upstreamProbeAfterMs=Date.now()-100;
+context.tick();
+assert.equal(started.length,1,'New delay requires a fresh timer signal');
+context.upstreamProbeTimerReady=true;
 context.tick();
 assert.equal(started.length,2,'Second permitted probe');
 context.completeOutageProbe(context.upstreamProbeId);
@@ -88,6 +98,15 @@ assert.equal(started.at(-1).probe,false);
 
 // At the moment a global outage is detected, queued manual work is deferred;
 // already-active work is still permitted to finish and close the progress.
+// An early/misfired timer cannot bypass a future wall-clock deadline.
+context.upstreamOutageActive=true;
+context.upstreamProbeId='';context.upstreamProbeTimerReady=true;
+context.upstreamProbeAfterMs=Date.now()+600000;
+context.active={};context.inFlightCount=0;context.lastStartMs=0;
+context.tick();
+assert.equal(started.length,3,'Early timer signal must not launch a feed');
+assert.equal(context.upstreamProbeTimerReady,false,'Early timer signal is consumed and rearmed');
+assert.equal(context.outageProbeTimer.started,true);
 context.upstreamOutageActive=false;
 context.upstreamProbeId='';
 context.active={c:{}};context.inFlightCount=1;
@@ -107,5 +126,10 @@ assert.ok(engine.includes('failure(id, "HTTP " + xhr.status, xhr.status)'));
 assert.ok(engine.includes('if (isProbe) completeOutageProbe(id)'));
 assert.ok(engine.includes('startFeed(channels[p], true)'));
 assert.ok(engine.includes('startFeed(channels[j], false)'));
+assert.ok(engine.includes('!upstreamProbeTimerReady || now < upstreamProbeAfterMs'));
+assert.ok(engine.includes('id: outageProbeTimer'));
+assert.ok(engine.includes('outageProbeTimer.start()'));
+assert.ok(engine.includes('engine.upstreamProbeTimerReady = true'));
+assert.ok(engine.includes('instance=" + instanceId')); 
 assert.ok(engine.includes('if (upstreamProbeId === id) failOutageProbe(id)'));
 console.log('PASS cross-channel outage threshold, bounded probes, recovery, active manual-progress completion');

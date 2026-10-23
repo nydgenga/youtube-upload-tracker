@@ -67,7 +67,7 @@ assert.throws(()=>ctx.parseAtom(feed([element('entry',[
   txt('yt:channelId','UCaaaaaaaaaaaaaaaaaaaaaa'),txt('id','yt:video:'+videoA)])])), /different channel/);
 // Logging: record only metadata about the parse, no video titles or XML payload.
 const engine=fs.readFileSync(new URL('../package/contents/ui/UploadEngine.qml',import.meta.url),'utf8');
-for(const expected of ['YTUPLOAD_DEV15','PARSE_RESULT','PARSE_EMPTY_SAMPLE','FETCH_OK','FETCH_ERROR','developmentLogging: true'])
+for(const expected of ['YTUPLOAD event=','PARSE_RESULT','PARSE_EMPTY_SAMPLE','FETCH_OK','FETCH_ERROR','verboseLogging: true'])
   assert.ok(engine.includes(expected),expected);
 assert.ok(!engine.includes('console.log(xhr.responseText)'));
 console.log('PASS reduced DOM fallbacks, 15-entry regression, identity rejection and debug log markers');

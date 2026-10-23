@@ -9,16 +9,21 @@ Item {
     height: 0
 
     property var store: null
-    // Development builds only. Turn off for release: no request/parse logs.
-    // Use warning-level logging temporarily in development builds: some Plasma
-    // setups disable Qt QML debug-level console.log messages by default.
-    // Diagnostic events should appear in plasmashell's journal as YTUPLOAD_DEV15.
-    property bool developmentLogging: true
+    // Critical diagnostics are permanent. Routine success/parse logs are
+    // verbose, and should be disabled for stable public releases. Journal
+    // logging does not persist a second on-disk log or include feed bodies.
+    property bool verboseLogging: true
+    // Different Plasma widget instances share a process; each has its own
+    // circuit-breaker state. Include this marker to disambiguate journal lines.
+    property string instanceId: Date.now().toString(36) + "-" + Math.floor(Math.random() * 65536).toString(16)
 
     function debugLog(eventName, channelId, details) {
-        if (!developmentLogging) return;
+        var important = ["FETCH_ERROR", "OUTAGE_ENTER", "OUTAGE_PROBE_SCHEDULE",
+                         "OUTAGE_PROBE_FAILED", "OUTAGE_RECOVERED", "CHANNEL_MISMATCH",
+                         "CHANNEL_RECOVERED", "PROBE_GUARD_BLOCKED"].indexOf(eventName) !== -1;
+        if (!important && !verboseLogging) return;
         var suffix = String(details || "").replace(/[^A-Za-z0-9_= .,:\/+-]/g, "_").slice(0, 220);
-        console.warn("YTUPLOAD_DEV15 event=" + eventName +
+        console.warn("YTUPLOAD event=" + eventName + " instance=" + instanceId +
                     " channel=" + String(channelId || "none") +
                     (suffix ? " " + suffix : ""));
     }
@@ -47,6 +52,9 @@ Item {
     // These session-only fields do not change the persisted channel schema.
     property bool upstreamOutageActive: false
     property double upstreamProbeAfterMs: 0
+    // Neither the scheduler nor a QML binding may launch a probe until a
+    // separate one-shot Timer has fired. The absolute deadline is a second guard.
+    property bool upstreamProbeTimerReady: false
     property string upstreamProbeId: ""
     property int upstreamProbeFailures: 0
     property var recentFeedResults: []
@@ -227,8 +235,13 @@ Item {
 
     function scheduleOutageProbe() {
         var delay = Math.min(3600000, 600000 * Math.pow(2, Math.min(3, upstreamProbeFailures)));
+        upstreamProbeTimerReady = false;
         upstreamProbeAfterMs = Date.now() + delay;
-        debugLog("OUTAGE_PROBE_SCHEDULE", "none", "delay_ms=" + delay);
+        outageProbeTimer.stop();
+        outageProbeTimer.interval = delay;
+        outageProbeTimer.start();
+        debugLog("OUTAGE_PROBE_SCHEDULE", "none", "delay_ms=" + delay +
+                 " deadline_ms=" + upstreamProbeAfterMs);
     }
 
     function enterUpstreamOutage(sampleCount, failedCount) {
@@ -259,6 +272,8 @@ Item {
     function completeOutageProbe(id) {
         if (!upstreamOutageActive || upstreamProbeId !== id) return;
         upstreamOutageActive = false;
+        outageProbeTimer.stop();
+        upstreamProbeTimerReady = false;
         upstreamProbeId = "";
         upstreamProbeAfterMs = 0;
         upstreamProbeFailures = 0;
@@ -430,11 +445,27 @@ Item {
         if (upstreamOutageActive) {
             // One live-feed probe at a time. Honor BOTH the outage delay and
             // each channel's persisted backoff; do not force a cooled-down ID.
-            if (upstreamProbeId || now < upstreamProbeAfterMs) return;
+            if (upstreamProbeId || !upstreamProbeTimerReady || now < upstreamProbeAfterMs) {
+                // Logging only when the one-shot timer has fired but the clock
+                // guard still blocks us, indicating an unexpected QML timing event.
+                if (!upstreamProbeId && upstreamProbeTimerReady && now < upstreamProbeAfterMs) {
+                    // An unexpectedly early timer signal must not cause repeated
+                    // warnings every 500 ms. Rearm it for the remaining interval.
+                    var remaining = Math.max(1000, Math.ceil(upstreamProbeAfterMs - now));
+                    upstreamProbeTimerReady = false;
+                    outageProbeTimer.interval = remaining;
+                    outageProbeTimer.start();
+                    debugLog("PROBE_GUARD_BLOCKED", "none", "now_ms=" + now +
+                             " deadline_ms=" + upstreamProbeAfterMs + " rearm_ms=" + remaining);
+                }
+                return;
+            }
             for (var p = 0; p < channels.length; ++p) {
                 if (!active[channels[p].id] && !recovering[channels[p].id]) {
+                    upstreamProbeTimerReady = false;
                     upstreamProbeId = channels[p].id;
-                    debugLog("OUTAGE_PROBE_START", upstreamProbeId, "");
+                    debugLog("OUTAGE_PROBE_START", upstreamProbeId, "now_ms=" + now +
+                             " deadline_ms=" + upstreamProbeAfterMs);
                     startFeed(channels[p], true);
                     break;
                 }
@@ -449,5 +480,19 @@ Item {
         }
     }
 
+    Timer {
+        id: outageProbeTimer
+        interval: 600000
+        running: false
+        repeat: false
+        onTriggered: {
+            if (engine.upstreamOutageActive) {
+                engine.upstreamProbeTimerReady = true;
+                engine.debugLog("OUTAGE_PROBE_READY", "none", "now_ms=" + Date.now() +
+                                " deadline_ms=" + engine.upstreamProbeAfterMs);
+                engine.tick();
+            }
+        }
+    }
     Timer { interval: 500; running: true; repeat: true; onTriggered: engine.tick() }
 }
