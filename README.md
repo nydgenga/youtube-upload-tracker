@@ -1,3 +1,6 @@
+# Archived!
+This project is impossible. YouTube's feed service is inherently useless and has multi-hour outages randomly.
+
 # YouTube Upload Tracker (Plasma 6)
 
 **Status:** v0.1.0-dev16 — *experimental test build*, not a released product.
